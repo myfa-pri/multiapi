@@ -22,26 +22,28 @@
         window.Telegram.WebApp.expand();
         const tg = window.Telegram.WebApp;
         const urlParams = new URLSearchParams(window.location.search);
+        
+        // Grab variables from the URL
         const botHash = urlParams.get('bot_hash');
+        const botId = urlParams.get('bot'); // Gets the @username of the bot
         const user = tg.initDataUnsafe?.user;
 
-        // Generate a unique ID for the device
+        // Generate a compact 16-character unique ID to save database space
         function generateUUID() {
-            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-                var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-                return v.toString(16);
-            });
+            return Math.random().toString(36).substring(2, 10) + 
+                   Math.random().toString(36).substring(2, 10);
         }
 
         async function startVerification() {
-            if (!botHash || !user) {
+            // Require botId now as well
+            if (!botHash || !user || !botId) {
                 document.getElementById('status-title').innerText = "Error";
                 document.getElementById('status-message').innerText = "Invalid link. Please open this from the bot directly.";
                 document.getElementById('loader').style.display = "none";
                 return;
             }
 
-            // CRITICAL STEP: Get or Create Device ID in browser cache
+            // Get or Create Device ID in browser cache
             let deviceId = localStorage.getItem("tg_security_device_id");
             if (!deviceId) {
                 deviceId = generateUUID();
@@ -55,7 +57,8 @@
                     body: JSON.stringify({
                         bot_hash: botHash,
                         user_id: user.id,
-                        device_id: deviceId
+                        device_id: deviceId,
+                        bot_id: botId    // <-- Send the Bot Username to the backend!
                     })
                 });
 
@@ -64,8 +67,8 @@
 
                 if (result.success) {
                     document.getElementById('status-title').innerText = "Success!";
-                    document.getElementById('status-message').innerText = "Verification complete. Checking your bot now...";
-                    setTimeout(() => tg.close(), 2500); // Closes Web App automatically
+                    document.getElementById('status-message').innerText = "Verification complete. Returning to bot...";
+                    setTimeout(() => tg.close(), 2500); 
                 } else {
                     document.getElementById('status-title').innerText = "Verification Failed";
                     document.getElementById('status-message').innerText = result.error || "Please return to the bot.";
@@ -78,7 +81,6 @@
             }
         }
 
-        // Start process
         startVerification();
     </script>
 </body>
