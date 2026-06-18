@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Verification</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: var(--tg-theme-bg-color, #ffffff); color: var(--tg-theme-text-color, #222222); display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .loader { border: 4px solid var(--tg-theme-secondary-bg-color, #e0e0e0); border-top: 4px solid var(--tg-theme-button-color, #0088cc); border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 20px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        h2 { margin: 0 0 10px 0; font-size: 22px;}
+        p { text-align: center; padding: 0 20px; color: var(--tg-theme-hint-color, #777); font-size: 15px;}
+    </style>
+</head>
+<body>
+    <div class="loader" id="loader"></div>
+    <h2 id="status-title">Verifying Device...</h2>
+    <p id="status-message">Please do not close this window. We are checking your device security.</p>
+
+    <script>
+        window.Telegram.WebApp.expand();
+        const tg = window.Telegram.WebApp;
+        const urlParams = new URLSearchParams(window.location.search);
+        const botHash = urlParams.get('bot_hash');
+        const user = tg.initDataUnsafe?.user;
+
+        // Generate a unique ID for the device
+        function generateUUID() {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+
+        async function startVerification() {
+            if (!botHash || !user) {
+                document.getElementById('status-title').innerText = "Error";
+                document.getElementById('status-message').innerText = "Invalid link. Please open this from the bot directly.";
+                document.getElementById('loader').style.display = "none";
+                return;
+            }
+
+            // CRITICAL STEP: Get or Create Device ID in browser cache
+            let deviceId = localStorage.getItem("tg_security_device_id");
+            if (!deviceId) {
+                deviceId = generateUUID();
+                localStorage.setItem("tg_security_device_id", deviceId);
+            }
+
+            try {
+                const response = await fetch('/api/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        bot_hash: botHash,
+                        user_id: user.id,
+                        device_id: deviceId
+                    })
+                });
+
+                const result = await response.json();
+                document.getElementById('loader').style.display = "none";
+
+                if (result.success) {
+                    document.getElementById('status-title').innerText = "Success!";
+                    document.getElementById('status-message').innerText = "Verification complete. Checking your bot now...";
+                    setTimeout(() => tg.close(), 2500); // Closes Web App automatically
+                } else {
+                    document.getElementById('status-title').innerText = "Verification Failed";
+                    document.getElementById('status-message').innerText = result.error || "Please return to the bot.";
+                }
+
+            } catch (e) {
+                document.getElementById('loader').style.display = "none";
+                document.getElementById('status-title').innerText = "Network Error";
+                document.getElementById('status-message').innerText = "Could not connect to the security server.";
+            }
+        }
+
+        // Start process
+        startVerification();
+    </script>
+</body>
+</html>
