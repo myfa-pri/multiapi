@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/tg-client/bot_register.php", "destination": "/api/bot_register" },
+    { "source": "/tg-client/index.html", "destination": "/index.html" }
+  ]
+}
