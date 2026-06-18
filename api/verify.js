@@ -1,5 +1,16 @@
-import { kv } from '@vercel/kv';
+import admin from 'firebase-admin';
 import axios from 'axios';
+
+if (!admin.apps.length) {
+    admin.initializeApp({
+        credential: admin.credential.cert({
+            projectId: process.env.FIREBASE_PROJECT_ID,
+            clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+            privateKey: process.env.FIREBASE_PRIVATE_KEY ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n') : undefined,
+        }),
+    });
+}
+const db = admin.firestore();
 
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -11,65 +22,72 @@ export default async function handler(req, res) {
     }
 
     try {
-        // 1. Check the database for the Device FIRST
-        const deviceKey = `d:${bot_id}:${device_id}`;
-        const existingUserId = await kv.get(deviceKey);
-        
-        // 2. Get the webhook URL (it might be null if they clicked an old button)
-        const webhookUrl = await kv.get(`h:${bot_hash}`);
+        // 1. Unique device key formatted as "bot_id:device_id"
+        const deviceDocId = `${bot_id}_${device_id}`;
+        const deviceDocRef = db.collection('devices').doc(deviceDocId);
+        const deviceSnap = await deviceDocRef.get();
+
+        // 2. Fetch the corresponding webhook
+        const webhookDocRef = db.collection('webhooks').doc(bot_hash);
+        const webhookSnap = await webhookDocRef.get();
+        const webhookUrl = webhookSnap.exists ? webhookSnap.data().webhook_url : null;
 
         // --- SCENARIO 1: USER IS ALREADY VERIFIED ---
-        if (existingUserId && String(existingUserId) === String(user_id)) {
-            // Refresh their 90-day timer since they are active
-            await kv.expire(deviceKey, 7776000); 
-            
-            // If they clicked a NEW link, tell the bot. 
-            if (webhookUrl) {
-                await axios.post(webhookUrl, { 
-                    status: "info", 
-                    title: "Already Verified", 
-                    message: `Your device is already verified for ${bot_id}.` 
-                });
-                await kv.del(`h:${bot_hash}`); // Clean up
-            }
-            
-            // Instantly tell the Web App everything is fine!
-            return res.status(200).json({ success: true, message: "Already verified" });
-        }
+        if (deviceSnap.exists) {
+            const existingUserId = deviceSnap.data().user_id;
 
-        // --- SCENARIO 2: MULTI-ACCOUNT DETECTED (BAN) ---
-        if (existingUserId && String(existingUserId) !== String(user_id)) {
-            if (webhookUrl) {
-                await axios.post(webhookUrl, { 
-                    status: "error", 
-                    title: "Verification Failed", 
-                    message: "Multiple accounts detected on the same physical device for this specific bot." 
+            if (String(existingUserId) === String(user_id)) {
+                // Update timestamp to keep the active user tracked
+                await deviceDocRef.update({
+                    updatedAt: admin.firestore.FieldValue.serverTimestamp()
                 });
-                await kv.del(`h:${bot_hash}`); // Clean up
+
+                if (webhookUrl) {
+                    await axios.post(webhookUrl, { 
+                        status: "info", 
+                        title: "Already Verified", 
+                        message: `Your device is already verified for ${bot_id}.` 
+                    });
+                    await webhookDocRef.delete(); 
+                }
+
+                return res.status(200).json({ success: true, message: "Already verified" });
+            } else {
+                // --- SCENARIO 2: MULTI-ACCOUNT DETECTED (BAN) ---
+                if (webhookUrl) {
+                    await axios.post(webhookUrl, { 
+                        status: "error", 
+                        title: "Verification Failed", 
+                        message: "Multiple accounts detected on the same physical device for this specific bot." 
+                    });
+                    await webhookDocRef.delete(); 
+                }
+                return res.status(200).json({ success: false, error: "Multiple accounts detected. Verification failed." });
             }
-            // Block them on the web app side too
-            return res.status(200).json({ success: false, error: "Multiple accounts detected. Verification failed." });
         }
 
         // --- SCENARIO 3: BRAND NEW VERIFICATION ---
-        if (!existingUserId) {
-            // If they are brand new, they MUST have a valid link. If not, they are clicking an old dead button.
+        if (!deviceSnap.exists) {
             if (!webhookUrl) {
                 return res.status(400).json({ error: 'Verification link expired. Send /start in the bot to get a new one.' });
             }
 
-            // Register the new device for 90 days
-            await kv.set(deviceKey, String(user_id), { ex: 7776000 });
-            
-            // Tell the bot they passed
+            // Register device
+            await deviceDocRef.set({
+                user_id: String(user_id),
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+
+            // Trigger the success webhook payload to the bot
             await axios.post(webhookUrl, { 
                 status: "success", 
                 title: "Verified Successfully", 
                 message: "Your device has been successfully verified." 
             });
-            
-            // Delete the temporary webhook link to save database space
-            await kv.del(`h:${bot_hash}`);
+
+            // Clean up the used hash webhook doc
+            await webhookDocRef.delete();
 
             return res.status(200).json({ success: true });
         }
