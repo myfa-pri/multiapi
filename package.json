@@ -1,0 +1,11 @@
+{
+  "name": "tg-device-verify",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node api/verify.js"
+  },
+  "dependencies": {
+    "@vercel/kv": "^3.0.0",
+    "axios": "^1.6.8"
+  }
+}
